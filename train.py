@@ -1,146 +1,163 @@
+# ==========================================
+# Train XGBoost with GridSearchCV
+# ==========================================
+
 import pandas as pd
 import joblib
-from pathlib import Path
 
-from sklearn.model_selection import train_test_split
-from sklearn.preprocessing import LabelEncoder
-from sklearn.metrics import classification_report
+from sklearn.model_selection import (
+    train_test_split,
+    GridSearchCV
+)
+
+from sklearn.metrics import (
+    accuracy_score,
+    classification_report
+)
 
 from xgboost import XGBClassifier
 
-# =========================
-# Paths
-# =========================
+# ==========================================
+# Load Dataset
+# ==========================================
 
-BASE_DIR = Path(r"C:\Users\Ansha TV\Desktop\AzurePredictiveMaintenance\data").resolve()
-DATA_DIR = BASE_DIR
-MODEL_DIR = BASE_DIR / "models"
-MODEL_DIR.mkdir(parents=True, exist_ok=True)
+df = pd.read_csv("data/final_train.csv")
 
-# =========================
-# Load datasets
-# =========================
+# ==========================================
+# Target Variable
+# ==========================================
 
-telemetry = pd.read_csv(DATA_DIR / "C:\\Users\\Ansha TV\\Desktop\\AzurePredictiveMaintenance\\data\\PdM_telemetry.csv")
-failures = pd.read_csv(DATA_DIR / "C:\\Users\\Ansha TV\\Desktop\\AzurePredictiveMaintenance\\data\\PdM_failures.csv")
-machines = pd.read_csv(DATA_DIR / "C:\\Users\\Ansha TV\\Desktop\\AzurePredictiveMaintenance\\data\\PdM_machines.csv")
+target = "failure_count"
 
-# =========================
-# Convert datetime
-# =========================
+# ==========================================
+# Features and Labels
+# ==========================================
 
-telemetry['datetime'] = pd.to_datetime(telemetry['datetime'])
+X = df.drop(columns=[target])
 
-failures['datetime'] = pd.to_datetime(failures['datetime'])
+# Keep only numeric columns
+X = X.select_dtypes(
+    include=['int64', 'float64']
+)
+ 
 
-# =========================
-# Create failure label
-# =========================
+y = (df[target] > 0).astype(int)
+# ==========================================
+# Train Test Split
+# ==========================================
 
-telemetry['failure'] = 0
-
-failure_times = failures[['machineID', 'datetime']]
-
-for idx, row in failure_times.iterrows():
-
-    machine = row['machineID']
-    fail_time = row['datetime']
-
-    telemetry.loc[
-        (
-            (telemetry['machineID'] == machine)
-            &
-            (telemetry['datetime'] <= fail_time)
-        ),
-        'failure'
-    ] = 1
-
-# =========================
-# Merge machine metadata
-# =========================
-
-df = telemetry.merge(
-    machines,
-    on='machineID',
-    how='left'
+X_train, X_test, y_train, y_test = (
+    train_test_split(
+        X,
+        y,
+        test_size=0.2,
+        random_state=42
+    )
 )
 
-# =========================
-# Encode categorical columns
-# =========================
+# ==========================================
+# Base Model
+# ==========================================
 
-encoder = LabelEncoder()
-
-df['model'] = encoder.fit_transform(df['model'])
-
-# =========================
-# Drop datetime
-# =========================
-
-df.drop(['datetime'], axis=1, inplace=True)
-
-# =========================
-# Features & Target
-# =========================
-
-X = df.drop('failure', axis=1)
-
-y = df['failure']
-
-# =========================
-# Train-Test Split
-# =========================
-
-X_train, X_test, y_train, y_test = train_test_split(
-    X,
-    y,
-    test_size=0.2,
-    random_state=42,
-    stratify=y
-)
-
-# =========================
-# Model
-# =========================
-
-model = XGBClassifier(
-    n_estimators=150,
-    learning_rate=0.05,
-    max_depth=6,
+xgb_model = XGBClassifier(
+    eval_metric='logloss',
     random_state=42
 )
 
-# =========================
-# Train
-# =========================
+# ==========================================
+# Hyperparameter Grid
+# ==========================================
 
-model.fit(X_train, y_train)
+param_grid = {
 
-# =========================
-# Predict
-# =========================
+    'n_estimators': [100, 200],
 
-y_pred = model.predict(X_test)
+    'max_depth': [4, 6, 8],
 
-# =========================
+    'learning_rate': [0.01, 0.05, 0.1],
+
+    'subsample': [0.8, 1.0],
+
+    'colsample_bytree': [0.8, 1.0]
+}
+
+# ==========================================
+# GridSearchCV
+# ==========================================
+
+grid_search = GridSearchCV(
+
+    estimator=xgb_model,
+
+    param_grid=param_grid,
+
+    scoring='accuracy',
+
+    cv=3,
+
+    verbose=2,
+
+    n_jobs=-1
+)
+
+# ==========================================
+# Train Model
+# ==========================================
+
+grid_search.fit(
+    X_train,
+    y_train
+)
+
+# ==========================================
+# Best Model
+# ==========================================
+
+best_model = grid_search.best_estimator_
+
+print("\nBest Parameters:")
+
+print(grid_search.best_params_)
+
+# ==========================================
+# Predictions
+# ==========================================
+
+y_pred = best_model.predict(X_test)
+
+# ==========================================
 # Evaluation
-# =========================
+# ==========================================
 
-print(classification_report(y_test, y_pred))
+accuracy = accuracy_score(
+    y_test,
+    y_pred
+)
 
-# =========================
-# Save model
-# =========================
+print("\nAccuracy:", accuracy)
 
-from pathlib import Path
+print("\nClassification Report:\n")
 
-# Create folder
-Path("models").mkdir(exist_ok=True)
+print(
+    classification_report(
+        y_test,
+        y_pred
+    )
+)
+
+# ==========================================
+# Save Best Model
+# ==========================================
+import os
+
+# Create models folder
+os.makedirs("models", exist_ok=True)
 
 # Save model
 joblib.dump(
-    model,
+    best_model,
     "models/xgboost_model.pkl"
 )
 
-print("Model saved successfully")
+print("Model saved successfully!")
+# ==========================================
