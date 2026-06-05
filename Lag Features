@@ -1,0 +1,18 @@
+sensor_cols = [
+    'volt',
+    'rotate',
+    'pressure',
+    'vibration'
+]
+
+for col in sensor_cols:
+
+    df[f'{col}_lag_1'] = (
+        df.groupby('machineID')[col]
+        .shift(1)
+    )
+
+    df[f'{col}_lag_2'] = (
+        df.groupby('machineID')[col]
+        .shift(2)
+    )
