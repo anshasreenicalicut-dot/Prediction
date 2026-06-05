@@ -1,0 +1,8 @@
+for col in sensor_cols:
+
+    df[f'{col}_ema_5'] = (
+        df.groupby('machineID')[col]
+        .transform(
+            lambda x: x.ewm(span=5, adjust=False).mean()
+        )
+    )
