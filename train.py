@@ -1,9 +1,6 @@
-# ==========================================
-# Train XGBoost with GridSearchCV
-# ==========================================
-
-import pandas as pd
+import os
 import joblib
+import pandas as pd
 
 from sklearn.model_selection import (
     train_test_split,
@@ -11,153 +8,208 @@ from sklearn.model_selection import (
 )
 
 from sklearn.metrics import (
-    accuracy_score,
-    classification_report
+    classification_report,
+    confusion_matrix,
+    precision_score,
+    recall_score,
+    f1_score,
+    average_precision_score
 )
 
 from xgboost import XGBClassifier
+from imblearn.over_sampling import SMOTE
 
 # ==========================================
-# Load Dataset
+# LOAD DATA
 # ==========================================
+
+print("Loading dataset...")
 
 df = pd.read_csv("data/final_train.csv")
 
-# ==========================================
-# Target Variable
-# ==========================================
-
-target = "failure_count"
+print("Dataset Shape:", df.shape)
 
 # ==========================================
-# Features and Labels
+# TARGET COLUMN
 # ==========================================
 
-X = df.drop(columns=[target])
+TARGET = "failure_count"
+
+if TARGET not in df.columns:
+    print("\nAvailable Columns:")
+    print(df.columns.tolist())
+    raise ValueError(f"{TARGET} column not found!")
+
+# ==========================================
+# FEATURES & LABELS
+# ==========================================
+
+X = df.drop(columns=[TARGET])
+
+# Remove datetime column if present
+if "datetime" in X.columns:
+    X = X.drop(columns=["datetime"])
 
 # Keep only numeric columns
-X = X.select_dtypes(
-    include=['int64', 'float64']
-)
- 
+X = X.select_dtypes(include=["int64", "float64"])
 
-y = (df[target] > 0).astype(int)
-# ==========================================
-# Train Test Split
-# ==========================================
+y = df[TARGET]
 
-X_train, X_test, y_train, y_test = (
-    train_test_split(
-        X,
-        y,
-        test_size=0.2,
-        random_state=42
-    )
-)
+# Convert to binary classification
+y = (y > 0).astype(int)
+
+print("\nTarget Distribution:")
+print(y.value_counts())
 
 # ==========================================
-# Base Model
+# TRAIN TEST SPLIT
 # ==========================================
 
-xgb_model = XGBClassifier(
-    eval_metric='logloss',
-    random_state=42
+X_train, X_test, y_train, y_test = train_test_split(
+    X,
+    y,
+    test_size=0.2,
+    random_state=42,
+    stratify=y
 )
 
 # ==========================================
-# Hyperparameter Grid
+# SMOTE
 # ==========================================
 
-param_grid = {
+print("\nApplying SMOTE...")
 
-    'n_estimators': [100, 200],
+smote = SMOTE(random_state=42)
 
-    'max_depth': [4, 6, 8],
-
-    'learning_rate': [0.01, 0.05, 0.1],
-
-    'subsample': [0.8, 1.0],
-
-    'colsample_bytree': [0.8, 1.0]
-}
-
-# ==========================================
-# GridSearchCV
-# ==========================================
-
-grid_search = GridSearchCV(
-
-    estimator=xgb_model,
-
-    param_grid=param_grid,
-
-    scoring='accuracy',
-
-    cv=3,
-
-    verbose=2,
-
-    n_jobs=-1
-)
-
-# ==========================================
-# Train Model
-# ==========================================
-
-grid_search.fit(
+X_train_smote, y_train_smote = smote.fit_resample(
     X_train,
     y_train
 )
 
+print("\nAfter SMOTE:")
+print(pd.Series(y_train_smote).value_counts())
+
 # ==========================================
-# Best Model
+# MODEL
+# ==========================================
+
+xgb = XGBClassifier(
+    objective="binary:logistic",
+    eval_metric="logloss",
+    random_state=42,
+    n_jobs=-1
+)
+
+# ==========================================
+# SMALL GRID SEARCH
+# ==========================================
+
+param_grid = {
+
+    "n_estimators": [100, 200],
+
+    "max_depth": [4, 6],
+
+    "learning_rate": [0.1]
+
+}
+
+grid_search = GridSearchCV(
+    estimator=xgb,
+    param_grid=param_grid,
+    scoring="average_precision",
+    cv=3,
+    verbose=2,
+    n_jobs=-1
+)
+
+print("\nRunning GridSearchCV...")
+
+grid_search.fit(
+    X_train_smote,
+    y_train_smote
+)
+
+# ==========================================
+# BEST MODEL
 # ==========================================
 
 best_model = grid_search.best_estimator_
 
 print("\nBest Parameters:")
-
 print(grid_search.best_params_)
 
 # ==========================================
-# Predictions
+# PREDICTIONS
 # ==========================================
 
 y_pred = best_model.predict(X_test)
 
+y_prob = best_model.predict_proba(
+    X_test
+)[:, 1]
+
 # ==========================================
-# Evaluation
+# METRICS
 # ==========================================
 
-accuracy = accuracy_score(
+precision = precision_score(
     y_test,
     y_pred
 )
 
-print("\nAccuracy:", accuracy)
-
-print("\nClassification Report:\n")
-
-print(
-    classification_report(
-        y_test,
-        y_pred
-    )
+recall = recall_score(
+    y_test,
+    y_pred
 )
 
-# ==========================================
-# Save Best Model
-# ==========================================
-import os
+f1 = f1_score(
+    y_test,
+    y_pred
+)
 
-# Create models folder
-os.makedirs("models", exist_ok=True)
+pr_auc = average_precision_score(
+    y_test,
+    y_prob
+)
 
-# Save model
+print("\n========== RESULTS ==========")
+
+print("Precision :", round(precision, 4))
+print("Recall    :", round(recall, 4))
+print("F1 Score  :", round(f1, 4))
+print("PR-AUC    :", round(pr_auc, 4))
+
+print("\nConfusion Matrix:")
+print(confusion_matrix(
+    y_test,
+    y_pred
+))
+
+print("\nClassification Report:")
+print(classification_report(
+    y_test,
+    y_pred
+))
+
+# ==========================================
+# SAVE MODEL
+# ==========================================
+
+os.makedirs(
+    "models",
+    exist_ok=True
+)
+
 joblib.dump(
     best_model,
     "models/xgboost_model.pkl"
 )
 
-print("Model saved successfully!")
-# ==========================================
+joblib.dump(
+    list(X.columns),
+    "models/feature_columns.pkl"
+)
+
+print("\nModel Saved Successfully!")
+print("Saved to models/xgboost_model.pkl")
